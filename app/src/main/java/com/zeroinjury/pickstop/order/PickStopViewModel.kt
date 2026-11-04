@@ -132,6 +132,18 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { while (isActive) { tick(); delay(250) } }
     }
 
+    /** 내비 경유지 요청 뒤 내비 화면이 앞으로 나오면, 픽스탑 화면으로 다시 돌아온다(주행 중 화면 전환 최소화). */
+    private fun returnToApp() {
+        val ctx = getApplication<Application>()
+        viewModelScope.launch {
+            delay(900)
+            runCatching {
+                ctx.startActivity(android.content.Intent(ctx, com.zeroinjury.pickstop.MainActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+            }
+        }
+    }
+
     private fun syncOrder(list: List<Order>) {
         val cur = _ui.value.order ?: return
         val fresh = list.firstOrNull { it.no == cur.no } ?: return
@@ -153,18 +165,25 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         if (driving) drivingAcc += dt
         val drivingSec = drivingAcc.toLong()
         if (demoActive && driving) {
-            val mps = 98 / 3.6
-            demoDistance.keys.toList().forEach { k -> demoDistance[k] = (demoDistance.getValue(k) - mps * dt) }
+            if (demoCongestionSec > 0) {
+                // 정체: 그 시간만큼 차가 거의 서 있는다
+                demoCongestionSec = (demoCongestionSec - dt).coerceAtLeast(0.0)
+            } else {
+                val mps = 98 / 3.6
+                demoDistance.keys.toList().forEach { k -> demoDistance[k] = (demoDistance.getValue(k) - mps * dt) }
+            }
+            val target = s.order?.takeIf { !it.arrived }?.stop?.id
+            if (target != null && demoDistance.getValue(target) <= 0.0) onArrived()
         }
 
         // 2) 경로상 휴게소 도착 예정
         val naviEta = navi.eta.value
         val stops = RestStops.onRoute.mapNotNull { st ->
             val d = demoDistance.getValue(st.id)
-            if (d < -200) return@mapNotNull null
+            if (d < -200 && st.id != s.order?.stop?.id) return@mapNotNull null
             val baseSec = (d.coerceAtLeast(0.0) / (98 / 3.6)).roundToInt()
             val etaSec = if (!demoActive && naviEta != null && naviEta.stopName == st.name) naviEta.remainSec
-            else baseSec + if (st.id == s.order?.stop?.id || s.order == null) demoCongestionSec.roundToInt() else 0
+            else baseSec + demoCongestionSec.roundToInt()
             StopEta(st, etaSec, (d / 1000).roundToInt().coerceAtLeast(0))
         }
         val source = if (!demoActive && naviEta != null) naviEta.source else if (demoActive) "시연 주행" else "내비 경로 대기"
@@ -210,7 +229,6 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
                         say("앞쪽 정체로 도착이 ${lateMin}분 늦어져요. 매장에 알리고 조리 시작을 미뤘어요.")
                     }
                 }
-                if (eta <= 0 && demoActive) onArrived()
             }
         }
         val cur = OrderStore.find(o.no) ?: return
@@ -231,13 +249,14 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
     fun listen() = voice.listen()
 
     private fun onVoice(raw: String) {
+        android.util.Log.i("PickStop/Voice", "heard: $raw (pending=${_ui.value.pending != null})")
         val t = raw.replace(" ", "")
         val s = _ui.value
         val yes = listOf("응", "네", "예", "좋아", "주문해", "그래", "오케이").any { t.startsWith(it) || t == it }
         val no = listOf("아니", "아뇨", "됐어", "괜찮아").any { t.startsWith(it) }
         when {
             s.pending != null && yes -> confirmPending()
-            s.pending != null && no -> { _ui.value = s.copy(pending = null); say("알겠어요. 주문하지 않을게요.") }
+            s.pending != null && no -> dismissPending()
             "취소" in t -> cancelOrder()
             "커피" in t -> offerCoffee()
             "충전" in t -> s.vehicle.batteryPct?.let { offerEvMeal(it) } ?: say("배터리 정보를 받을 수 없어요.")
@@ -262,7 +281,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         if (s.order != null && s.order.status !in listOf(OrderStatus.PICKED_UP, OrderStatus.CANCELLED)) {
             say("이미 ${s.order.stop.name}에 주문해 두었어요."); return
         }
-        val next = s.next ?: run { say("경로에서 다음 휴게소를 찾지 못했어요."); return }
+        val next = reachable(6 * 60) ?: run { say("경로에서 다음 휴게소를 찾지 못했어요."); return }
         val cart = OrderStore.cart.value
         val (lines, reason) = if (cart.isNotEmpty())
             cart.mapNotNull { c -> next.stop.menu.firstOrNull { it.name == c.item.name }?.let { OrderLine(it, 1, c.who) } } to Pending.Reason.CART
@@ -272,7 +291,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun offerCoffee() {
-        val next = _ui.value.next ?: return
+        val next = reachable(2 * 60) ?: return
         val coffee = next.stop.menu.firstOrNull { it.name == "아이스 아메리카노" } ?: return
         _ui.value = _ui.value.copy(pending = Pending(next.stop, listOf(OrderLine(coffee)), Pending.Reason.COFFEE_BREAK, next.etaSec))
         say("2시간째 운전 중이에요. ${next.stop.name}에 커피 주문해 둘까요? 도착하면 바로 받아 가실 수 있어요.")
@@ -280,7 +299,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun offerEvMeal(battery: Int) {
         val s = _ui.value
-        val st = s.stops.firstOrNull { it.stop.evCharger } ?: return
+        val st = s.stops.firstOrNull { it.stop.evCharger && it.etaSec >= 11 * 60 } ?: return
         val socAtArrival = navi.eta.value?.socAtArrival ?: (battery - 3).coerceAtLeast(5)
         // 내비 충전 계획이 있으면 그 시간을, 없으면 80%까지 1%당 0.5분으로 어림한다.
         val chargeMin = navi.eta.value?.chargingMin ?: ((80 - socAtArrival).coerceAtLeast(10) * 0.5).roundToInt()
@@ -315,6 +334,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         OrderStore.clearCart()
         server.storeStopId = p.stop.id
         navi.addRestStopAsWaypoint(p.stop)
+        returnToApp()
         location.watchArrival(p.stop)
         val chargeEnd = p.chargeMin?.let { order.firstArrivalAt + it * 60_000L }
         chargeAlerted = false
@@ -322,7 +342,15 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         say("주문했어요. 도착 2분 전에 완성되도록 조리 시작을 맞춰 둘게요. ${p.stop.name}을 경유지로 넣었어요.")
     }
 
-    fun dismissPending() { _ui.value = _ui.value.copy(pending = null) }
+    /** 먼저 건넨 제안을 거절하면, 같은 주행 중에는 다시 조르지 않는다. */
+    fun dismissPending() {
+        coffeeOffered = true; evOffered = true
+        _ui.value = _ui.value.copy(pending = null)
+        say("알겠어요. 주문하지 않을게요.")
+    }
+
+    /** 조리 시간 + 3분보다 가까운 휴게소는 건너뛴다 (도착 전에 완성할 수 없으니까). */
+    private fun reachable(cookSec: Int): StopEta? = _ui.value.stops.firstOrNull { it.etaSec >= cookSec + 180 }
 
     fun cancelOrder() {
         val o = _ui.value.order ?: run { say("취소할 주문이 없어요."); return }
@@ -332,6 +360,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         payment.cancel(o.approvalId)
         OrderStore.update(o.no) { it.copy(status = OrderStatus.CANCELLED) }
         navi.removeRestStopWaypoint()
+        returnToApp()
         location.clearArrival()
         _ui.value = _ui.value.copy(order = null, notice = null, chargeEndAt = null)
         say("주문을 취소했어요. 결제 금액은 전액 환불돼요.")
@@ -351,6 +380,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         val o = _ui.value.order ?: return
         OrderStore.storeAction(o.no, "picked")
         navi.removeRestStopWaypoint()
+        returnToApp()
         location.clearArrival()
         val saved = _ui.value.savedMinutesMonth + 18
         _ui.value = _ui.value.copy(order = null, savedMinutesMonth = saved)
@@ -414,12 +444,15 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
 
     fun demoReset() {
         demoActive = false
+        demoDistance.putAll(mapOf("deokpyeong" to 39_200.0, "yeoju" to 83_300.0, "munmak" to 117_600.0))
+        demoCongestionSec = 0.0
+        coffeeOffered = false; evOffered = false; chargeAlerted = false
         AppClock.setSpeed(1)
         lastTick = AppClock.now()
         OrderStore.resetSamples(RestStops.DEOKPYEONG)
-        vehicle.simulateGear(null); vehicle.simulateBattery(null)
+        vehicle.simulateGear(VehicleBridge.Gear.PARK); vehicle.simulateBattery(null)
         _ui.value.order?.let { o -> if (o.status != OrderStatus.PICKED_UP) OrderStore.update(o.no) { it.copy(status = OrderStatus.CANCELLED) } }
-        navi.removeRestStopWaypoint(); location.clearArrival()
+        navi.removeRestStopWaypoint(); location.clearArrival(); returnToApp()
         drivingAcc = 0.0
         _ui.value = _ui.value.copy(order = null, pending = null, notice = null, demo = false, drivingSec = 0, chargeEndAt = null)
     }
