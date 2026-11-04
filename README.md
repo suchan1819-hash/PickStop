@@ -3,7 +3,7 @@
 차량 내비의 도착 예정 시간을 받아, 휴게소에 도착하는 순간 음식이 막 완성되도록 조리 시작 시점을 대신 잡아 주는 Pleos Connect 휴게소 미리주문 앱입니다. 운전 중에는 "다음 휴게소에서 늘 먹던 거" 한마디면 끝납니다.
 
 ## 시연 영상
-- [픽스탑 시연 영상 (2분 41초, Pleos Connect 에뮬레이터 실제 동작)](https://drive.google.com/file/d/1G3g_WRJXKsWETbEJT53-aBZLXXZtsJo5/view?usp=sharing)
+- [픽스탑 시연 영상 (2분 41초, Pleos Connect 에뮬레이터 실제 동작 · 앱 안내 음성 포함)](https://drive.google.com/file/d/1G3g_WRJXKsWETbEJT53-aBZLXXZtsJo5/view?usp=sharing)
 
 ## 주요 기능
 - **음성 한마디 주문 (주행 중)**: 화면 조작 없이 "다음 휴게소에서 늘 먹던 거" → "○○휴게소에서 소떡소떡과 아이스 아메리카노, 9,500원 주문할까요?" → "응".
@@ -41,7 +41,7 @@
 |---|---|
 | NaviHelper 3.0.5 | 경유지 정보(remainTime)·주행 정보(DrivingState.duration, ChargingPlan)·TripInfo(도착 시 예상 배터리)로 도착 예정 시간 계산, 휴게소 경유지 추가(addWaypoint), 경유지 도착·재탐색 이벤트 |
 | FusedLocation 1.1.3 | 차량 위치, 휴게소 반경 300m 진입 감지(addProximityAlert) |
-| TextToSpeech 3.3.1 | 주문 확인·정체 알림·픽업 번호 음성 (ON_DEVICE) |
+| TextToSpeech 3.3.1 | 정해진 안내 밖의 문장 음성 출력 (ON_DEVICE). 주요 안내 21문장은 녹음 음성(res/raw)으로 재생해 TTS 엔진이 없는 환경에서도 들립니다 |
 | SpeechToText 3.3.1 | "늘 먹던 거", "응", "취소" 핸즈프리 주문 (ON_DEVICE) |
 | Vehicle 2.3.2 / AAOS Car API | 기어·속도(주행 중에는 음성만, 정차 중에만 메뉴 화면), 전기차 배터리 잔량 |
 
@@ -60,3 +60,4 @@
 - Pleos Connect SDK (Vehicle, NaviHelper, FusedLocation, TextToSpeech, SpeechToText) — 42dot Pleos Connect SDK License Agreement
 - 글꼴: Asta Sans — SIL Open Font License 1.1 (Pleos Connect 시스템 서체)
 - 음식 사진: Pixabay 무료 이미지 (Pixabay Content License)
+- 앱 안내 음성(res/raw/vo_*.mp3): Higgsfield Text to Speech(ElevenLabs 엔진, 프리셋 음성)로 개발자가 직접 생성

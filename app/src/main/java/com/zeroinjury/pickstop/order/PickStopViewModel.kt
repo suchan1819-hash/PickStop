@@ -205,7 +205,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         val endAt = _ui.value.chargeEndAt
         if (endAt != null && !chargeAlerted && endAt - now <= 5 * 60_000L) {
             chargeAlerted = true
-            say("충전이 5분 뒤에 끝나요. 식사 마치고 바로 출발하시면 돼요.")
+            say("충전이 5분 뒤에 끝나요. 식사 마치고 바로 출발하시면 돼요.", "vo_charge_done")
         }
     }
 
@@ -226,7 +226,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
                     if (announce) {
                         val start = OrderStore.find(o.no)!!.cookStartAt
                         notice("앞쪽 정체로 도착이 ${lateMin}분 늦어져요", "매장에 새 도착 시간을 알리고, 조리 시작을 ${AppClock.hhmm(start)}로 미뤘어요")
-                        say("앞쪽 정체로 도착이 ${lateMin}분 늦어져요. 매장에 알리고 조리 시작을 미뤘어요.")
+                        say("앞쪽 정체로 도착이 ${lateMin}분 늦어져요. 매장에 알리고 조리 시작을 미뤘어요.", "vo_delay")
                     }
                 }
             }
@@ -261,11 +261,14 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
             "커피" in t -> offerCoffee()
             "충전" in t -> s.vehicle.batteryPct?.let { offerEvMeal(it) } ?: say("배터리 정보를 받을 수 없어요.")
             listOf("늘먹던", "먹던거", "다음휴게소", "주문해줘", "주문").any { it in t } -> offerUsual()
-            else -> say("다음 휴게소에서 늘 먹던 거, 라고 말씀해 주세요.")
+            else -> say("다음 휴게소에서 늘 먹던 거, 라고 말씀해 주세요.", "vo_help")
         }
     }
 
-    private fun say(text: String) = voice.speak(text)
+    /** clip: res/raw 에 녹음해 둔 음성(운전자 목소리). 없으면 TTS 로 말한다. */
+    private fun say(text: String, clip: String? = null) = voice.speak(text, clip)
+
+    private fun stopKey(s: RestStop) = when (s.id) { "deokpyeong" -> "dp"; "yeoju" -> "yj"; else -> "mm" }
 
     private fun notice(title: String, body: String) {
         _ui.value = _ui.value.copy(notice = "$title|$body")
@@ -279,7 +282,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
     fun offerUsual() {
         val s = _ui.value
         if (s.order != null && s.order.status !in listOf(OrderStatus.PICKED_UP, OrderStatus.CANCELLED)) {
-            say("이미 ${s.order.stop.name}에 주문해 두었어요."); return
+            say("이미 ${s.order.stop.name}에 주문해 두었어요.", "vo_already"); return
         }
         val next = reachable(6 * 60) ?: run { say("경로에서 다음 휴게소를 찾지 못했어요."); return }
         val cart = OrderStore.cart.value
@@ -294,7 +297,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         val next = reachable(2 * 60) ?: return
         val coffee = next.stop.menu.firstOrNull { it.name == "아이스 아메리카노" } ?: return
         _ui.value = _ui.value.copy(pending = Pending(next.stop, listOf(OrderLine(coffee)), Pending.Reason.COFFEE_BREAK, next.etaSec))
-        say("2시간째 운전 중이에요. ${next.stop.name}에 커피 주문해 둘까요? 도착하면 바로 받아 가실 수 있어요.")
+        say("2시간째 운전 중이에요. ${next.stop.name}에 커피 주문해 둘까요? 도착하면 바로 받아 가실 수 있어요.", "vo_coffee")
     }
 
     private fun offerEvMeal(battery: Int) {
@@ -307,21 +310,23 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
             .sortedByDescending { it.eatMin }.take(1) + st.stop.menu.filter { it.name == "아이스 아메리카노" }
         if (fits.isEmpty()) return
         _ui.value = s.copy(pending = Pending(st.stop, fits.distinct().map { OrderLine(it) }, Pending.Reason.EV_CHARGE, st.etaSec, chargeMin))
-        say("배터리가 ${battery}%예요. 충전기가 있는 ${st.stop.name}에서 충전에 ${chargeMin}분쯤 걸려요. 그 안에 드실 수 있는 ${fits.first().name}으로 주문해 둘까요?")
+        say("배터리가 ${battery}%예요. 충전기가 있는 ${st.stop.name}에서 충전에 ${chargeMin}분쯤 걸려요. 그 안에 드실 수 있는 ${fits.first().name}으로 주문해 둘까요?", "vo_ev")
     }
 
     private fun propose(p: Pending) {
         _ui.value = _ui.value.copy(pending = p)
         val names = p.lines.groupBy { it.item.name }.keys.joinToString("과 ")
         val who = if (p.reason == Pending.Reason.CART && p.lines.size > 2) "${p.lines.map { it.who }.distinct().size}인 메뉴" else names
-        say("${p.stop.name}까지 ${(p.etaSec + 59) / 60}분, $who ${"%,d".format(p.total)}원 주문할까요?")
+        val usual = who == "소떡소떡과 아이스 아메리카노" && p.total == 9500
+        say("${p.stop.name}까지 ${(p.etaSec + 59) / 60}분, $who ${"%,d".format(p.total)}원 주문할까요?",
+            if (usual) "vo_confirm_${stopKey(p.stop)}" else null)
     }
 
     fun confirmPending() {
         val p = _ui.value.pending ?: return
         if (payment.card == null) {
             _ui.value = _ui.value.copy(pending = null)
-            say("등록된 결제 수단이 없어요. 정차 중에 결제 카드를 한 번만 등록해 주세요."); return
+            say("등록된 결제 수단이 없어요. 정차 중에 결제 카드를 한 번만 등록해 주세요.", "vo_no_card"); return
         }
         val approval = payment.approve(p.total).getOrElse { say("결제에 실패했어요. 다시 시도해 주세요."); return }
         val now = AppClock.now()
@@ -339,14 +344,14 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         val chargeEnd = p.chargeMin?.let { order.firstArrivalAt + it * 60_000L }
         chargeAlerted = false
         _ui.value = _ui.value.copy(pending = null, order = order, manualScreen = null, notice = null, chargeEndAt = chargeEnd)
-        say("주문했어요. 도착 2분 전에 완성되도록 조리 시작을 맞춰 둘게요. ${p.stop.name}을 경유지로 넣었어요.")
+        say("주문했어요. 도착 2분 전에 완성되도록 조리 시작을 맞춰 둘게요. ${p.stop.name}을 경유지로 넣었어요.", "vo_ordered")
     }
 
     /** 먼저 건넨 제안을 거절하면, 같은 주행 중에는 다시 조르지 않는다. */
     fun dismissPending() {
         coffeeOffered = true; evOffered = true
         _ui.value = _ui.value.copy(pending = null)
-        say("알겠어요. 주문하지 않을게요.")
+        say("알겠어요. 주문하지 않을게요.", "vo_decline")
     }
 
     /** 조리 시간 + 3분보다 가까운 휴게소는 건너뛴다 (도착 전에 완성할 수 없으니까). */
@@ -355,7 +360,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelOrder() {
         val o = _ui.value.order ?: run { say("취소할 주문이 없어요."); return }
         if (!o.freeCancel) {
-            say("이미 조리를 시작해서 취소할 수 없어요. 도착하면 ${o.stop.counter}에서 받아 가세요."); return
+            say("이미 조리를 시작해서 취소할 수 없어요. 도착하면 ${o.stop.counter}에서 받아 가세요.", "vo_cancel_late"); return
         }
         payment.cancel(o.approvalId)
         OrderStore.update(o.no) { it.copy(status = OrderStatus.CANCELLED) }
@@ -363,7 +368,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         returnToApp()
         location.clearArrival()
         _ui.value = _ui.value.copy(order = null, notice = null, chargeEndAt = null)
-        say("주문을 취소했어요. 결제 금액은 전액 환불돼요.")
+        say("주문을 취소했어요. 결제 금액은 전액 환불돼요.", "vo_cancel")
     }
 
     private fun onArrived() {
@@ -373,7 +378,8 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         if (demoActive) vehicle.simulateGear(VehicleBridge.Gear.PARK)
         val ready = OrderStore.find(o.no)?.status == OrderStatus.READY
         say(if (ready) "${o.stop.name}에 도착했어요. 픽업 번호 ${o.no}번, ${o.stop.counter}입니다."
-            else "${o.stop.name}에 도착했어요. 픽업 번호 ${o.no}번, 곧 완성돼요. ${o.stop.counter}입니다.")
+            else "${o.stop.name}에 도착했어요. 픽업 번호 ${o.no}번, 곧 완성돼요. ${o.stop.counter}입니다.",
+            if (ready) "vo_arrived_${stopKey(o.stop)}" else "vo_arrived_soon_${stopKey(o.stop)}")
     }
 
     fun pickedUp() {
@@ -401,7 +407,7 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         if (names.isEmpty()) return
         prefs.edit().putString("favorites", names.joinToString("|")).apply()
         _ui.value = _ui.value.copy(favorites = names)
-        say("늘 먹던 조합으로 저장했어요. 주행 중에는 다음 휴게소에서 늘 먹던 거, 라고만 말씀하세요.")
+        say("늘 먹던 조합으로 저장했어요. 주행 중에는 다음 휴게소에서 늘 먹던 거, 라고만 말씀하세요.", "vo_saved")
     }
 
     fun registerCard() {
