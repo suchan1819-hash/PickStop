@@ -105,6 +105,8 @@ class OrderServer(context: Context, port: Int = PORT) : NanoHTTPD(port) {
     private fun image(id: String): Response {
         val stop = RestStops.byId(storeStopId) ?: RestStops.DEOKPYEONG
         val item = stop.menu.firstOrNull { it.id == id } ?: return bad()
+        // drawable-nodpi 의 webp 원본 바이트를 그대로 내보낸다 (raw 가 아니어도 openRawResource 로 읽을 수 있다)
+        @Suppress("ResourceType")
         val stream = appContext.resources.openRawResource(item.photo)
         return newChunkedResponse(Response.Status.OK, "image/webp", stream)
     }
