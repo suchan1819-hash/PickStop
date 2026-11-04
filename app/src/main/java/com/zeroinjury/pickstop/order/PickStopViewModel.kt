@@ -317,9 +317,14 @@ class PickStopViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = _ui.value.copy(pending = p)
         val names = p.lines.groupBy { it.item.name }.keys.joinToString("과 ")
         val who = if (p.reason == Pending.Reason.CART && p.lines.size > 2) "${p.lines.map { it.who }.distinct().size}인 메뉴" else names
-        val usual = who == "소떡소떡과 아이스 아메리카노" && p.total == 9500
-        say("${p.stop.name}까지 ${(p.etaSec + 59) / 60}분, $who ${"%,d".format(p.total)}원 주문할까요?",
-            if (usual) "vo_confirm_${stopKey(p.stop)}" else null)
+        // 녹음 음성: 단골 2개(9,500원) · 장바구니 3개(17,500원)는 메뉴와 금액까지 말하고, 그 밖의 조합은 화면 확인을 안내한다
+        val menu = p.lines.map { it.item.name }.toSet()
+        val clip = when {
+            menu == setOf("소떡소떡", "아이스 아메리카노") && p.total == 9500 -> "vo_confirm_${stopKey(p.stop)}"
+            menu == setOf("소떡소떡", "아이스 아메리카노", "우동") && p.total == 17500 -> "vo_confirm3_${stopKey(p.stop)}"
+            else -> "vo_confirm_generic"
+        }
+        say("${p.stop.name}까지 ${(p.etaSec + 59) / 60}분, $who ${"%,d".format(p.total)}원 주문할까요?", clip)
     }
 
     fun confirmPending() {
