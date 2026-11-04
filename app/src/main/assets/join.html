@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>우리 차 장바구니</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;background:#0B0D12;color:#F5F3EF;padding:20px;max-width:520px;margin:auto}
+h1{font-size:22px}p{color:#9AA0AB;font-size:14px;margin:6px 0 16px}
+input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#fff;font-size:16px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.item{background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);border-radius:18px;overflow:hidden;cursor:pointer}
+.item img{width:100%;height:110px;object-fit:cover;display:block}.item div{padding:10px 12px}.item b{display:block;font-size:15px}.item span{font-size:13px;color:#9AA0AB}
+.cart{margin-top:18px;background:rgba(255,255,255,.055);border-radius:18px;padding:14px 16px}
+.row{display:flex;justify-content:space-between;padding:6px 0;font-size:15px}.row span{color:#9AA0AB}
+</style></head><body>
+<h1 id="t">우리 차 장바구니</h1><p>먹고 싶은 메뉴를 누르면 차 화면의 장바구니에 바로 담겨요. 주문·결제는 운전자가 음성으로 확인해요.</p>
+<input id="who" placeholder="이름 (예: 지우)" maxlength="8">
+<div class="grid" id="g"></div>
+<div class="cart" id="c"></div>
+<script>
+async function menu(){const d=await (await fetch('/api/menu')).json();document.getElementById('t').textContent=d.stop+' · 우리 차 장바구니';
+ document.getElementById('g').innerHTML=d.menu.map(m=>`<div class="item" onclick="add('${m.id}')"><img src="${m.img}"><div><b>${m.name}</b><span>${m.price.toLocaleString()}원 · ${m.cookMin}분</span></div></div>`).join('')}
+async function add(id){const who=document.getElementById('who').value||'동승자';
+ await fetch('/api/cart',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'item='+encodeURIComponent(id)+'&who='+encodeURIComponent(who)});cart()}
+async function cart(){const d=await (await fetch('/api/cart',{cache:'no-store'})).json();
+ document.getElementById('c').innerHTML=d.lines.map(l=>`<div class="row">${l.name}<span>${l.who} · ${l.price.toLocaleString()}</span></div>`).join('')+`<div class="row"><b>합계</b><b>${d.total.toLocaleString()}원</b></div>`}
+menu();cart();setInterval(cart,2000);
+</script></body></html>

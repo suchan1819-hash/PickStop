@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>픽스탑 매장</title>
+<style>
+:root{--bg:#F3F1EC;--card:#fff;--ink:#16181D;--sub:#5B616B;--line:rgba(0,0,0,.06);--o:#FF8A3D;--red:#D2453A;--green:#14895F}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;background:linear-gradient(180deg,#F6F4F0,#ECE9E3);color:var(--ink);min-height:100vh;padding:28px 32px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:26px}
+.logo{width:44px;height:44px;border-radius:13px;background:linear-gradient(145deg,#FFB547,#FF8A3D);display:grid;place-items:center}
+header b{font-size:20px;display:block}header span{font-size:13px;color:#6B7079}
+.pill{margin-left:auto;font-size:14px;padding:9px 14px;border-radius:99px;background:#fff;border:1px solid rgba(0,0,0,.08);color:#3A3F48}
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.col h3{font-size:19px;margin:0 6px 14px;display:flex;justify-content:space-between;color:#3A3F48}
+.ord{background:var(--card);border-radius:22px;padding:20px 22px;margin-bottom:14px;box-shadow:0 8px 30px rgba(0,0,0,.06);border:1px solid var(--line)}
+.ord.now{border:2px solid var(--o)}
+.t{display:flex;justify-content:space-between;align-items:baseline}
+.t b{font-size:26px}.m{font-size:16px;color:var(--sub);margin-top:8px;line-height:1.5}
+.count{font-size:32px;font-weight:700;color:var(--o);font-variant-numeric:tabular-nums}
+.count.late{color:var(--red)}
+.tag{display:inline-block;margin-top:12px;padding:7px 12px;border-radius:10px;font-size:14px;font-weight:700;background:#F1EEE8;color:#6B6258}
+.tag.late{background:#FFE9E6;color:var(--red)}.tag.ready{background:#E3F7EF;color:var(--green)}
+button{width:100%;margin-top:14px;height:60px;border:0;border-radius:16px;background:var(--o);color:#fff;font-size:21px;font-weight:700;cursor:pointer}
+button.ghost{background:#F1EEE8;color:#3A3F48;height:48px;font-size:17px}
+.mine{outline:3px solid rgba(255,138,61,.25)}
+footer{margin-top:10px;font-size:13px;color:#8A8F98}
+</style></head><body>
+<header><div class="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2A1600" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><path d="M9.5 9.5l2 2 3.5-3.5"/></svg></div>
+<div><b>픽스탑 매장</b><span id="where">태블릿 웹</span></div><div class="pill" id="count">오늘 미리주문</div></header>
+<div class="cols">
+ <div class="col"><h3>조리 대기 <span id="n1">0</span></h3><div id="c1"></div></div>
+ <div class="col"><h3>지금 조리 시작 · 조리 중 <span id="n2">0</span></h3><div id="c2"></div></div>
+ <div class="col"><h3>완성 · 픽업 대기 <span id="n3">0</span></h3><div id="c3"></div></div>
+</div>
+<footer id="foot"></footer>
+<script>
+const fmt=s=>{s=Math.max(0,s|0);const m=(s/60)|0,x=s%60;return String(m).padStart(2,'0')+':'+String(x).padStart(2,'0')};
+async function act(no,a){await fetch('/api/orders/'+no+'/'+a,{method:'POST'});load()}
+function card(o){
+  const mine=o.sample?'':' mine';
+  if(o.status==='SCHEDULED'){
+    const late=o.delayMin>=3;
+    return `<div class="ord${mine}"><div class="t"><b>#${o.no}</b><span class="count${late?' late':''}">${fmt(o.toStartSec)}</span></div>
+    <div class="m">${o.summary}<br>도착 ${late?o.firstArrivalAt+' → ':''}${o.arrivalAt}</div>
+    <span class="tag${late?' late':''}">${late?'정체로 '+o.delayMin+'분 지연 · 자동 조정':'조리 시작까지'}</span></div>`}
+  if(o.status==='COOK_NOW') return `<div class="ord now${mine}"><div class="t"><b>#${o.no}</b><span style="font-size:17px;color:#5B616B">도착 ${Math.ceil(o.toArriveSec/60)}분 전</span></div>
+    <div class="m">${o.summary}</div><button onclick="act(${o.no},'start')">조리 시작</button></div>`;
+  if(o.status==='COOKING') return `<div class="ord${mine}"><div class="t"><b>#${o.no}</b><span style="font-size:17px;color:#5B616B">조리 중</span></div>
+    <div class="m">${o.summary}<br>도착 ${o.arrivalAt}</div><button class="ghost" onclick="act(${o.no},'ready')">완성</button></div>`;
+  return `<div class="ord${mine}"><div class="t"><b>#${o.no}</b><span style="font-size:17px;color:${o.arrived?'#14895F':'#5B616B'}">${o.arrived?'도착함':Math.ceil(o.toArriveSec/60)+'분 뒤 도착'}</span></div>
+    <div class="m">${o.summary}</div><span class="tag ready">${o.arrived?'손님 도착':'완성'}</span>
+    ${o.arrived?`<button class="ghost" onclick="act(${o.no},'picked')">전달 완료</button>`:''}</div>`}
+async function load(){
+  try{const d=await (await fetch('/api/store',{cache:'no-store'})).json();
+  document.getElementById('where').textContent=d.stop+' 푸드코트 (태블릿 웹)';
+  document.getElementById('count').textContent='오늘 미리주문 '+d.todayCount+'건 · '+d.clock+(d.speed>1?' · 시연 배속 ×'+d.speed:'');
+  const g={c1:[],c2:[],c3:[]};
+  d.orders.forEach(o=>{(o.status==='SCHEDULED'?g.c1:(o.status==='READY'?g.c3:g.c2)).push(card(o))});
+  for(const k in g){document.getElementById(k).innerHTML=g[k].join('');document.getElementById('n'+k[1]).textContent=g[k].length}
+  document.getElementById('foot').textContent='주황 테두리: 픽스탑 앱에서 방금 들어온 주문 · 회색: 시연용 가상 주문';
+  }catch(e){}
+}
+load();setInterval(load,1000);
+</script></body></html>
